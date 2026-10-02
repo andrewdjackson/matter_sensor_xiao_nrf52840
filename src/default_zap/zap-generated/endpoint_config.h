@@ -44,7 +44,7 @@
   {}
 
 // This is an array of EmberAfAttributeMetadata structures.
-#define GENERATED_ATTRIBUTE_COUNT 128
+#define GENERATED_ATTRIBUTE_COUNT 130
 #define GENERATED_ATTRIBUTES                                                   \
   {                                                                            \
                                                                                \
@@ -187,14 +187,18 @@
          ZAP_ATTRIBUTE_MASK(READABLE)}, /* BatReplacementNeeded */             \
         {ZAP_EMPTY_DEFAULT(), 0x00000010, 1, ZAP_TYPE(ENUM8),                  \
          ZAP_ATTRIBUTE_MASK(READABLE)}, /* BatReplaceability */                \
-        {ZAP_EMPTY_DEFAULT(), 0x0000001A, 1, ZAP_TYPE(ENUM8),                  \
-         ZAP_ATTRIBUTE_MASK(READABLE)}, /* BatChargeState */                   \
-        {ZAP_EMPTY_DEFAULT(), 0x0000001C, 1, ZAP_TYPE(BOOLEAN),                \
-         ZAP_ATTRIBUTE_MASK(READABLE)}, /* BatFunctionalWhileCharging */       \
+        {ZAP_EMPTY_DEFAULT(), 0x00000013, 61, ZAP_TYPE(CHAR_STRING),           \
+         ZAP_ATTRIBUTE_MASK(READABLE)}, /* BatReplacementDescription */        \
+        {ZAP_EMPTY_DEFAULT(), 0x00000014, 2, ZAP_TYPE(ENUM16),                 \
+         ZAP_ATTRIBUTE_MASK(READABLE)}, /* BatCommonDesignation */             \
+        {ZAP_EMPTY_DEFAULT(), 0x00000017, 2, ZAP_TYPE(ENUM16),                 \
+         ZAP_ATTRIBUTE_MASK(READABLE)}, /* BatApprovedChemistry */             \
+        {ZAP_EMPTY_DEFAULT(), 0x00000019, 1, ZAP_TYPE(INT8U),                  \
+         ZAP_ATTRIBUTE_MASK(READABLE)}, /* BatQuantity */                      \
         {ZAP_EMPTY_DEFAULT(), 0x0000001F, 0, ZAP_TYPE(ARRAY),                  \
          ZAP_ATTRIBUTE_MASK(EXTERNAL_STORAGE) |                                \
              ZAP_ATTRIBUTE_MASK(READABLE)}, /* EndpointList */                 \
-        {ZAP_SIMPLE_DEFAULT(6), 0x0000FFFC, 4, ZAP_TYPE(BITMAP32),             \
+        {ZAP_SIMPLE_DEFAULT(10), 0x0000FFFC, 4, ZAP_TYPE(BITMAP32),            \
          ZAP_ATTRIBUTE_MASK(READABLE)}, /* FeatureMap */                       \
         {ZAP_EMPTY_DEFAULT(), 0x0000FFFD, 2, ZAP_TYPE(INT16U),                 \
          ZAP_ATTRIBUTE_MASK(EXTERNAL_STORAGE) |                                \
@@ -634,8 +638,8 @@
       /* Endpoint: 0, Cluster: Power Source (server) */ \
       .clusterId = 0x0000002F, \
       .attributes = ZAP_ATTRIBUTE_INDEX(38), \
-      .attributeCount = 13, \
-      .clusterSize = 77, \
+      .attributeCount = 15, \
+      .clusterSize = 141, \
       .mask = ZAP_CLUSTER_MASK(SERVER), \
       .functions = NULL, \
       .acceptedCommandList = nullptr, \
@@ -646,7 +650,7 @@
   { \
       /* Endpoint: 0, Cluster: General Commissioning (server) */ \
       .clusterId = 0x00000030, \
-      .attributes = ZAP_ATTRIBUTE_INDEX(51), \
+      .attributes = ZAP_ATTRIBUTE_INDEX(53), \
       .attributeCount = 7, \
       .clusterSize = 0, \
       .mask = ZAP_CLUSTER_MASK(SERVER), \
@@ -659,7 +663,7 @@
   { \
       /* Endpoint: 0, Cluster: Network Commissioning (server) */ \
       .clusterId = 0x00000031, \
-      .attributes = ZAP_ATTRIBUTE_INDEX(58), \
+      .attributes = ZAP_ATTRIBUTE_INDEX(60), \
       .attributeCount = 13, \
       .clusterSize = 0, \
       .mask = ZAP_CLUSTER_MASK(SERVER), \
@@ -672,7 +676,7 @@
   { \
       /* Endpoint: 0, Cluster: General Diagnostics (server) */ \
       .clusterId = 0x00000033, \
-      .attributes = ZAP_ATTRIBUTE_INDEX(71), \
+      .attributes = ZAP_ATTRIBUTE_INDEX(73), \
       .attributeCount = 8, \
       .clusterSize = 0, \
       .mask = ZAP_CLUSTER_MASK(SERVER), \
@@ -685,7 +689,7 @@
   { \
       /* Endpoint: 0, Cluster: Administrator Commissioning (server) */ \
       .clusterId = 0x0000003C, \
-      .attributes = ZAP_ATTRIBUTE_INDEX(79), \
+      .attributes = ZAP_ATTRIBUTE_INDEX(81), \
       .attributeCount = 5, \
       .clusterSize = 4, \
       .mask = ZAP_CLUSTER_MASK(SERVER), \
@@ -698,7 +702,7 @@
   { \
       /* Endpoint: 0, Cluster: Operational Credentials (server) */ \
       .clusterId = 0x0000003E, \
-      .attributes = ZAP_ATTRIBUTE_INDEX(84), \
+      .attributes = ZAP_ATTRIBUTE_INDEX(86), \
       .attributeCount = 8, \
       .clusterSize = 0, \
       .mask = ZAP_CLUSTER_MASK(SERVER), \
@@ -711,7 +715,7 @@
   { \
       /* Endpoint: 0, Cluster: Group Key Management (server) */ \
       .clusterId = 0x0000003F, \
-      .attributes = ZAP_ATTRIBUTE_INDEX(92), \
+      .attributes = ZAP_ATTRIBUTE_INDEX(94), \
       .attributeCount = 6, \
       .clusterSize = 0, \
       .mask = ZAP_CLUSTER_MASK(SERVER), \
@@ -724,7 +728,7 @@
   { \
       /* Endpoint: 1, Cluster: Identify (server) */ \
       .clusterId = 0x00000003, \
-      .attributes = ZAP_ATTRIBUTE_INDEX(98), \
+      .attributes = ZAP_ATTRIBUTE_INDEX(100), \
       .attributeCount = 4, \
       .clusterSize = 0, \
       .mask = ZAP_CLUSTER_MASK(SERVER), \
@@ -737,7 +741,7 @@
   { \
       /* Endpoint: 1, Cluster: Descriptor (server) */ \
       .clusterId = 0x0000001D, \
-      .attributes = ZAP_ATTRIBUTE_INDEX(102), \
+      .attributes = ZAP_ATTRIBUTE_INDEX(104), \
       .attributeCount = 6, \
       .clusterSize = 0, \
       .mask = ZAP_CLUSTER_MASK(SERVER), \
@@ -750,7 +754,7 @@
   { \
       /* Endpoint: 1, Cluster: Temperature Measurement (server) */ \
       .clusterId = 0x00000402, \
-      .attributes = ZAP_ATTRIBUTE_INDEX(108), \
+      .attributes = ZAP_ATTRIBUTE_INDEX(110), \
       .attributeCount = 5, \
       .clusterSize = 12, \
       .mask = ZAP_CLUSTER_MASK(SERVER), \
@@ -763,7 +767,7 @@
   { \
       /* Endpoint: 2, Cluster: Identify (server) */ \
       .clusterId = 0x00000003, \
-      .attributes = ZAP_ATTRIBUTE_INDEX(113), \
+      .attributes = ZAP_ATTRIBUTE_INDEX(115), \
       .attributeCount = 4, \
       .clusterSize = 0, \
       .mask = ZAP_CLUSTER_MASK(SERVER), \
@@ -776,7 +780,7 @@
   { \
       /* Endpoint: 2, Cluster: Descriptor (server) */ \
       .clusterId = 0x0000001D, \
-      .attributes = ZAP_ATTRIBUTE_INDEX(117), \
+      .attributes = ZAP_ATTRIBUTE_INDEX(119), \
       .attributeCount = 6, \
       .clusterSize = 0, \
       .mask = ZAP_CLUSTER_MASK(SERVER), \
@@ -789,7 +793,7 @@
   { \
       /* Endpoint: 2, Cluster: Relative Humidity Measurement (server) */ \
       .clusterId = 0x00000405, \
-      .attributes = ZAP_ATTRIBUTE_INDEX(123), \
+      .attributes = ZAP_ATTRIBUTE_INDEX(125), \
       .attributeCount = 5, \
       .clusterSize = 12, \
       .mask = ZAP_CLUSTER_MASK(SERVER), \
@@ -808,7 +812,7 @@
 // This is an array of EmberAfEndpointType structures.
 #define GENERATED_ENDPOINT_TYPES                                               \
   {                                                                            \
-    {ZAP_CLUSTER_INDEX(0), 12, 90}, {ZAP_CLUSTER_INDEX(12), 3, 12},            \
+    {ZAP_CLUSTER_INDEX(0), 12, 154}, {ZAP_CLUSTER_INDEX(12), 3, 12},           \
         {ZAP_CLUSTER_INDEX(15), 3, 12},                                        \
   }
 
@@ -822,7 +826,7 @@ static_assert(ATTRIBUTE_LARGEST <= CHIP_CONFIG_MAX_ATTRIBUTE_STORE_ELEMENT_SIZE,
 #define ATTRIBUTE_SINGLETONS_SIZE (0)
 
 // Total size of attribute storage
-#define ATTRIBUTE_MAX_SIZE (114)
+#define ATTRIBUTE_MAX_SIZE (178)
 
 // Number of fixed endpoints
 #define FIXED_ENDPOINT_COUNT (3)

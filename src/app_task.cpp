@@ -15,16 +15,16 @@
 #include <setup_payload/OnboardingCodesUtil.h>
 
 #include <zephyr/logging/log.h>
+#include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/sensor.h>
 
-#ifdef CONFIG_FUEL_GAUGE
-#include <zephyr/drivers/fuel_gauge.h>
-#endif
-
+#include <hal/nrf_power.h>
 
 #include <app-common/zap-generated/attributes/Accessors.h>
+#include <app/clusters/power-source-server/power-source-server.h>
 
 #include <cmath>
+#include <iterator>
 
 LOG_MODULE_DECLARE(app, CONFIG_CHIP_APP_LOG_LEVEL);
 
@@ -53,11 +53,97 @@ namespace {
 
 	const device *sht4x_dev = DEVICE_DT_GET_ONE(sensirion_sht4x);
 
-#ifdef CONFIG_FUEL_GAUGE
-	constexpr uint8_t kPowerSourceEndpointId = 0;
-	const device *max17048_dev = DEVICE_DT_GET_ONE(maxim_max17048);
+#ifdef CONFIG_NCS_SAMPLE_MATTER_LEDS
+	// Status LED, only lit while commissioning to save battery. LED3 is the Xiao's blue LED.
+	constexpr Nrf::DeviceLeds kStatusLed = Nrf::DeviceLeds::LED3;
+	// Short flash once a second while advertising and waiting to be commissioned.
+	constexpr uint32_t kAdvertisingLedOnMs = 50;
+	constexpr uint32_t kAdvertisingLedOffMs = 950;
+	// Fast even blink while a commissioner is connected over Bluetooth.
+	constexpr uint32_t kBleConnectedLedOnMs = 100;
+	constexpr uint32_t kBleConnectedLedOffMs = 100;
 #endif
 
+	// Power Source cluster, reporting the 2 x AA lithium batteries.
+	constexpr EndpointId kPowerSourceEndpointId = 0;
+	constexpr uint8_t kBatteryQuantity = 2;
+	constexpr char kPowerSourceDescription[] = "Battery";
+	constexpr char kBatteryReplacementDescription[] = "2 x AA lithium (Li-FeS2)";
+
+	// Battery pack voltages at which the charge level drops to Warning and Critical.
+	constexpr int32_t kBatteryWarningMv = 2800;
+	constexpr int32_t kBatteryCriticalMv = 2400;
+
+	// Approximate state of charge for 2 x AA lithium (Li-FeS2) cells in series, under light load.
+	// The discharge curve is flat for most of the battery life and then falls quickly, so this is
+	// only a rough guide. Points must be in descending voltage order.
+	struct BatteryLevelPoint {
+		int32_t millivolts;
+		uint8_t percent;
+	};
+	constexpr BatteryLevelPoint kBatteryLevelCurve[] = {
+		{ 3500, 100 }, { 3300, 80 }, { 3000, 40 }, { 2800, 20 }, { 2400, 5 }, { 2200, 0 },
+	};
+
+	// The batteries feed the 3V3 rail directly, so the nRF52840 supply voltage (VDD) is the
+	// battery voltage. Boards without the ADC channel in their overlay don't measure it.
+#if DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels)
+#define BATTERY_ADC_AVAILABLE 1
+	const adc_dt_spec kBatteryAdc = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 0);
+	bool sBatteryAdcReady = false;
+
+	int ReadBatteryMillivolts(int32_t &millivolts)
+	{
+		int16_t sample = 0;
+		adc_sequence sequence = {};
+		sequence.buffer = &sample;
+		sequence.buffer_size = sizeof(sample);
+
+		int rc = adc_sequence_init_dt(&kBatteryAdc, &sequence);
+		if (rc == 0) {
+			rc = adc_read_dt(&kBatteryAdc, &sequence);
+		}
+		if (rc != 0) {
+			return rc;
+		}
+
+		// Single-ended readings can dip slightly below zero.
+		millivolts = sample < 0 ? 0 : sample;
+		return adc_raw_to_millivolts_dt(&kBatteryAdc, &millivolts);
+	}
+#endif
+
+	uint8_t BatteryPercentFromMillivolts(int32_t millivolts)
+	{
+		if (millivolts >= kBatteryLevelCurve[0].millivolts) {
+			return kBatteryLevelCurve[0].percent;
+		}
+
+		// Interpolate linearly between the two surrounding points of the curve.
+		for (size_t i = 1; i < std::size(kBatteryLevelCurve); i++) {
+			const BatteryLevelPoint &high = kBatteryLevelCurve[i - 1];
+			const BatteryLevelPoint &low = kBatteryLevelCurve[i];
+			if (millivolts >= low.millivolts) {
+				return static_cast<uint8_t>(low.percent + (millivolts - low.millivolts) * (high.percent - low.percent) /
+								  (high.millivolts - low.millivolts));
+			}
+		}
+		return 0;
+	}
+
+	// When USB is plugged in, the Xiao's regulator powers the 3V3 rail, so VDD no longer tells
+	// us anything about the batteries.
+	bool IsUsbPowered()
+	{
+		return nrf_power_usbregstatus_vbusdet_get(NRF_POWER);
+	}
+
+	void LogIfFailed(Protocols::InteractionModel::Status status, const char *attributeName)
+	{
+		if (status != Protocols::InteractionModel::Status::Success) {
+			LOG_ERR("Updating %s failed: %x", attributeName, to_underlying(status));
+		}
+	}
 
 } //namespace
 
@@ -78,6 +164,27 @@ void AppTask::MatterEventHandler(const ChipDeviceEvent *event, intptr_t arg)
 		sIsMeasurementTimerStarted = true;
 	}
 }
+
+#ifdef CONFIG_NCS_SAMPLE_MATTER_LEDS
+void AppTask::UpdateStatusLED()
+{
+	// Replaces the default Nordic status LED handler, which keeps the LED solid on once
+	// commissioned and would drain the battery. Here the LED is off unless commissioning.
+	Nrf::LEDWidget &statusLed = Nrf::GetBoard().GetLED(kStatusLed);
+	statusLed.Set(false);
+
+	switch (Nrf::GetBoard().GetDeviceState()) {
+	case Nrf::DeviceState::DeviceAdvertisingBLE:
+		statusLed.Blink(kAdvertisingLedOnMs, kAdvertisingLedOffMs);
+		break;
+	case Nrf::DeviceState::DeviceConnectedBLE:
+		statusLed.Blink(kBleConnectedLedOnMs, kBleConnectedLedOffMs);
+		break;
+	default:
+		break;
+	}
+}
+#endif
 
 void AppTask::UpdateTemperatureClusterState()
 {
@@ -149,90 +256,103 @@ void AppTask::UpdateHumidityClusterState()
 		LOG_ERR("Getting humidity measurement data from BME280 failed with: %d", result);
 	}
 }
-#ifdef CONFIG_FUEL_GAUGE
+void AppTask::InitPowerSourceCluster()
+{
+	namespace PowerSource = Clusters::PowerSource;
+	namespace Attributes = Clusters::PowerSource::Attributes;
+
+	// Fixed details of the batteries, which don't change at runtime.
+	LogIfFailed(Attributes::Status::Set(kPowerSourceEndpointId, PowerSource::PowerSourceStatusEnum::kActive), "Status");
+	LogIfFailed(Attributes::Order::Set(kPowerSourceEndpointId, 0), "Order");
+	LogIfFailed(Attributes::Description::Set(kPowerSourceEndpointId, CharSpan::fromCharString(kPowerSourceDescription)),
+		    "Description");
+	LogIfFailed(Attributes::BatReplaceability::Set(kPowerSourceEndpointId, PowerSource::BatReplaceabilityEnum::kUserReplaceable),
+		    "BatReplaceability");
+	LogIfFailed(Attributes::BatReplacementDescription::Set(kPowerSourceEndpointId,
+						   CharSpan::fromCharString(kBatteryReplacementDescription)),
+		    "BatReplacementDescription");
+	LogIfFailed(Attributes::BatCommonDesignation::Set(kPowerSourceEndpointId, PowerSource::BatCommonDesignationEnum::kAa),
+		    "BatCommonDesignation");
+	LogIfFailed(Attributes::BatApprovedChemistry::Set(kPowerSourceEndpointId,
+					      PowerSource::BatApprovedChemistryEnum::kLithiumIronDisulfide),
+		    "BatApprovedChemistry");
+	LogIfFailed(Attributes::BatQuantity::Set(kPowerSourceEndpointId, kBatteryQuantity), "BatQuantity");
+
+	// Tell controllers which endpoints this battery powers. Without this the EndpointList is empty and
+	// controllers don't link the battery to the sensor endpoints, so it isn't shown on the device card.
+	EndpointId poweredEndpoints[] = { kPowerSourceEndpointId, kTemperatureMeasurementEndpointId,
+					  kHumidityMeasurementEndpointId };
+	const CHIP_ERROR err = Clusters::PowerSourceServer::Instance().SetEndpointList(kPowerSourceEndpointId,
+										 Span<EndpointId>(poweredEndpoints));
+	if (err != CHIP_NO_ERROR) {
+		LOG_ERR("Setting power source endpoint list failed: %" CHIP_ERROR_FORMAT, err.Format());
+	}
+
+#ifdef BATTERY_ADC_AVAILABLE
+	if (!adc_is_ready_dt(&kBatteryAdc)) {
+		LOG_ERR("Battery ADC device not ready");
+	} else {
+		const int rc = adc_channel_setup_dt(&kBatteryAdc);
+		if (rc != 0) {
+			LOG_ERR("Setting up battery ADC channel failed with: %d", rc);
+		}
+		sBatteryAdcReady = (rc == 0);
+	}
+#endif
+}
+
 void AppTask::UpdateBatteryClusterState()
 {
-	union fuel_gauge_prop_val val_pct;
-	union fuel_gauge_prop_val val_volt;
-	union fuel_gauge_prop_val val_runtime_full; // NEW: Changed variable name
-	Protocols::InteractionModel::Status status;
+	namespace PowerSource = Clusters::PowerSource;
+	namespace Attributes = Clusters::PowerSource::Attributes;
 
-	// 1. Get Battery Percentage
-	int rc = fuel_gauge_get_prop(max17048_dev, FUEL_GAUGE_RELATIVE_STATE_OF_CHARGE, &val_pct);
+	int32_t millivolts = 0;
+	bool measured = false;
 
-	if (rc == 0) {
-		// Driver gives 0-100 (val_pct.relative_state_of_charge)
-		// Matter spec (BatPercentRemaining) is 0-200 (in 0.5% units)
-		uint8_t matter_pct = static_cast<uint8_t>(val_pct.relative_state_of_charge * 2);
-
-		LOG_DBG("New battery percentage: %d%%, attribute value: %d", val_pct.relative_state_of_charge, matter_pct);
-
-		status = Clusters::PowerSource::Attributes::BatPercentRemaining::Set(kPowerSourceEndpointId, matter_pct);
-		if (status != Protocols::InteractionModel::Status::Success) {
-			LOG_ERR("Updating BatPercentRemaining failed: %x", to_underlying(status));
-		}
+	if (IsUsbPowered()) {
+		LOG_DBG("USB powered, battery voltage not measured");
 	} else {
-		LOG_ERR("Getting battery percentage failed with: %d", rc);
-		// Set to "unknown" (0xFF) on failure
-		status = Clusters::PowerSource::Attributes::BatPercentRemaining::Set(kPowerSourceEndpointId, 0xFF);
-		if (status != Protocols::InteractionModel::Status::Success) {
-			LOG_ERR("Setting BatPercentRemaining to 'unknown' failed: %x", to_underlying(status));
-		}
-	}
-
-	// 2. Get Battery Voltage
-	rc = fuel_gauge_get_prop(max17048_dev, FUEL_GAUGE_VOLTAGE, &val_volt);
-	if (rc == 0) {
-		// Driver gives uV. Matter attribute (BatVoltage) is in mV.
-		uint32_t matter_volt_mv = val_volt.voltage / 1000;
-		LOG_DBG("New battery voltage: %u uV, attribute value: %u mV", val_volt.voltage, matter_volt_mv);
-
-		status = Clusters::PowerSource::Attributes::BatVoltage::Set(kPowerSourceEndpointId, matter_volt_mv);
-		if (status != Protocols::InteractionModel::Status::Success) {
-			LOG_ERR("Updating BatVoltage failed: %x", to_underlying(status));
-		}
-	} else {
-		LOG_ERR("Getting battery voltage failed with: %d", rc);
-		// Set to "unknown" (0xFFFFFFFF) on failure
-		status = Clusters::PowerSource::Attributes::BatVoltage::Set(kPowerSourceEndpointId, 0xFFFFFFFF);
-		if (status != Protocols::InteractionModel::Status::Success) {
-			LOG_ERR("Setting BatVoltage to 'unknown' failed: %x", to_underlying(status));
-		}
-	}
-
-	// 3. Get Charging State
-	// The driver returns 'true' if charging
-	rc = fuel_gauge_get_prop(max17048_dev, FUEL_GAUGE_RUNTIME_TO_FULL, &val_runtime_full);
-	if (rc == 0) {
-		Clusters::PowerSource::BatChargeStateEnum charge_state;
-
-		if (val_runtime_full.runtime_to_full > 0) {
-			// If time to full is > 0, we are charging
-			charge_state = Clusters::PowerSource::BatChargeStateEnum::kIsCharging;
+#ifdef BATTERY_ADC_AVAILABLE
+		const int rc = sBatteryAdcReady ? ReadBatteryMillivolts(millivolts) : -ENODEV;
+		if (rc == 0) {
+			measured = true;
 		} else {
-			// Otherwise, we are not charging (or are full)
-			charge_state = Clusters::PowerSource::BatChargeStateEnum::kIsNotCharging;
+			LOG_ERR("Reading battery voltage failed with: %d", rc);
 		}
-		// NOTE: This driver doesn't seem to have a "battery full" state.
-		// kNotCharging is the best fit for discharging or full.
-
-		LOG_DBG("New battery runtime to full: %d, attribute value: %d", val_runtime_full.runtime_to_full, (uint8_t)charge_state);
-		status = Clusters::PowerSource::Attributes::BatChargeState::Set(kPowerSourceEndpointId, charge_state);
-		if (status != Protocols::InteractionModel::Status::Success) {
-			LOG_ERR("Updating BatChargeState failed: %x", to_underlying(status));
-		}
-
-	} else {
-		LOG_ERR("Getting battery runtime to full failed with: %d", rc);
-		// Set to "unknown" (0x03) on failure
-		status = Clusters::PowerSource::Attributes::BatChargeState::Set(kPowerSourceEndpointId,
-										Clusters::PowerSource::BatChargeStateEnum::kUnknown);
-		if (status != Protocols::InteractionModel::Status::Success) {
-			LOG_ERR("Setting BatChargeState to 'unknown' failed: %x", to_underlying(status));
-		}
-	}
-}
 #endif
+	}
+
+	if (!measured) {
+		// Unknown battery level: report null rather than a misleading value, and don't raise
+		// low battery warnings.
+		LogIfFailed(Attributes::BatVoltage::SetNull(kPowerSourceEndpointId), "BatVoltage");
+		LogIfFailed(Attributes::BatPercentRemaining::SetNull(kPowerSourceEndpointId), "BatPercentRemaining");
+		LogIfFailed(Attributes::BatChargeLevel::Set(kPowerSourceEndpointId, PowerSource::BatChargeLevelEnum::kOk), "BatChargeLevel");
+		LogIfFailed(Attributes::BatReplacementNeeded::Set(kPowerSourceEndpointId, false), "BatReplacementNeeded");
+		return;
+	}
+
+	const uint8_t percent = BatteryPercentFromMillivolts(millivolts);
+
+	PowerSource::BatChargeLevelEnum chargeLevel = PowerSource::BatChargeLevelEnum::kOk;
+	if (millivolts < kBatteryCriticalMv) {
+		chargeLevel = PowerSource::BatChargeLevelEnum::kCritical;
+	} else if (millivolts < kBatteryWarningMv) {
+		chargeLevel = PowerSource::BatChargeLevelEnum::kWarning;
+	}
+
+	LOG_DBG("New battery measurement: %d mV, %u %%, charge level: %u", millivolts, percent,
+		to_underlying(chargeLevel));
+
+	LogIfFailed(Attributes::BatVoltage::Set(kPowerSourceEndpointId, static_cast<uint32_t>(millivolts)), "BatVoltage");
+	// BatPercentRemaining is in half percent units (0-200).
+	LogIfFailed(Attributes::BatPercentRemaining::Set(kPowerSourceEndpointId, static_cast<uint8_t>(percent * 2)),
+		    "BatPercentRemaining");
+	LogIfFailed(Attributes::BatChargeLevel::Set(kPowerSourceEndpointId, chargeLevel), "BatChargeLevel");
+	LogIfFailed(Attributes::BatReplacementNeeded::Set(kPowerSourceEndpointId,
+					      chargeLevel != PowerSource::BatChargeLevelEnum::kOk),
+		    "BatReplacementNeeded");
+}
 
 void AppTask::MeasurementsTimerHandler()
 {
@@ -244,6 +364,9 @@ void AppTask::UpdateClustersState()
 	// Fetch a new sample from the sensor. This updates all channels.
 	const int result_bme = sensor_sample_fetch(sht4x_dev);
 
+	// This runs on the application thread, so hold the Matter stack lock while updating attributes.
+	DeviceLayer::StackLock lock;
+
 	if (result_bme == 0) {
 		// Update both clusters with the new data.
 		UpdateTemperatureClusterState();
@@ -251,9 +374,7 @@ void AppTask::UpdateClustersState()
 	} else {
 		LOG_ERR("Fetching data from SHT4X sensor failed with: %d", result_bme);
 	}
-#ifdef CONFIG_FUEL_GAUGE
 	UpdateBatteryClusterState();
-#endif
 }
 
 CHIP_ERROR AppTask::Init()
@@ -261,7 +382,12 @@ CHIP_ERROR AppTask::Init()
 	/* Initialize Matter stack */
 	ReturnErrorOnFailure(Nrf::Matter::PrepareServer());
 
-	if (!Nrf::GetBoard().Init()) {
+#ifdef CONFIG_NCS_SAMPLE_MATTER_LEDS
+	const bool boardInitialized = Nrf::GetBoard().Init(nullptr, UpdateStatusLED);
+#else
+	const bool boardInitialized = Nrf::GetBoard().Init();
+#endif
+	if (!boardInitialized) {
 		LOG_ERR("User interface initialization failed.");
 		return CHIP_ERROR_INCORRECT_STATE;
 	}
@@ -280,6 +406,11 @@ CHIP_ERROR AppTask::Init()
 	k_timer_init(&sMeasurementsTimer, [](k_timer *) { Nrf::PostTask([] { MeasurementsTimerHandler(); }); }, nullptr);
 
 	ReturnErrorOnFailure(Nrf::Matter::StartServer());
+
+	{
+		DeviceLayer::StackLock lock;
+		InitPowerSourceCluster();
+	}
 
 	// On reboot, if the device is already commissioned, start the timer directly.
 	if (chip::Server::GetInstance().GetFabricTable().FabricCount() > 0 && !sIsMeasurementTimerStarted) {

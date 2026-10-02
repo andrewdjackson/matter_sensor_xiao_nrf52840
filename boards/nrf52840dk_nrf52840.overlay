@@ -42,11 +42,5 @@
 		repeatability = <2>;
 		reg = <0x44>;
 	};
-
-	max17048@36 {
-		compatible = "maxim,max17048";
-		reg = <0x36>;
-		status = "okay";
-	};	
 };
 

@@ -1,34 +1,34 @@
 / {
 
 	buttons {
-	
+
 		compatible = "gpio-keys";
-	
+
 		button0: button_0 {
 			gpios = <&xiao_d 3 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 			label = "Push button switch 0";
 			zephyr,code = <INPUT_KEY_0>;
-		
+
 		};
-	
+
 		button1: button_1 {
 			gpios = <&xiao_d 4 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 			label = "Push button switch 1";
 			zephyr,code = <INPUT_KEY_1>;
 		};
-	
+
 		button2: button_2 {
 			gpios = <&xiao_d 5 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 			label = "Push button switch 2";
 			zephyr,code = <INPUT_KEY_2>;
 		};
-	
+
 		button3: button_3 {
 			gpios = <&xiao_d 6 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
 			label = "Push button switch 3";
 			zephyr,code = <INPUT_KEY_3>;
 		};
-	
+
 	};
 };
 
@@ -67,11 +67,29 @@
 		repeatability = <2>;
 		reg = <0x44>;
 	};
+};
 
-	max17048@36 {
-		compatible = "maxim,max17048";
-		reg = <0x36>;
-		status = "okay";
-	};	
+/* Battery voltage: the AA batteries feed the 3V3 pin directly, so the
+ * nRF52840's own supply voltage (VDD) is the battery voltage. It is measured
+ * internally by the SAADC, no pins are used.
+ */
+/ {
+	zephyr,user {
+		io-channels = <&adc 0>;
+	};
+};
+
+&adc {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <NRF_SAADC_VDD>;
+		zephyr,resolution = <12>;
+	};
 };
 

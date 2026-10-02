@@ -29,11 +29,15 @@ private:
 
 	static void MeasurementsTimerHandler();
 
+#ifdef CONFIG_NCS_SAMPLE_MATTER_LEDS
+	static void UpdateStatusLED();
+#endif
+
 	void UpdateTemperatureClusterState();
 
 	void UpdateHumidityClusterState();
-#ifdef CONFIG_FUEL_GAUGE
+	void InitPowerSourceCluster();
+
 	void UpdateBatteryClusterState();
-#endif
 
 };
